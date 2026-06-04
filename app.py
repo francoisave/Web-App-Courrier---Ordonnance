@@ -199,15 +199,17 @@ def injecter_nom(texte_template: str, nom_salarie: str) -> str:
         return texte_template
 
 
-def generer_docx(date_du_jour: str, destinataire: str, corps_du_texte: str) -> io.BytesIO:
+def generer_docx(date_du_jour: str, destinataire: str, salarie: str, corps_du_texte: str) -> io.BytesIO:
     """Injecte les données dans le template Word et retourne un BytesIO.
-    Note : docxtpl utilise \\a pour les sauts de paragraphe dans Word (pas \\n).
+    Le template contient 4 balises :
+      {{ date_du_jour }}, {{ destinataire }}, {{ salarié }}, {{ corps_du_texte}}
+    Note : \a = saut de paragraphe Word (docxtpl), \n = saut de ligne simple.
     """
     doc = DocxTemplate("master_template.docx")
     doc.render({
         "date_du_jour": date_du_jour,
-        # \n → \a : convertit les retours ligne Python en vrais paragraphes Word
         "destinataire": destinataire.replace('\n', '\a'),
+        "salarié": salarie,                              # ← balise "Concernant :"
         "corps_du_texte": corps_du_texte.replace('\n', '\a'),
     })
     bio = io.BytesIO()
@@ -331,12 +333,7 @@ if choix_principal == "Courrier":
 
         corps_msg = st.text_area("Corps du message :", height=300, key="corps_texte")
 
-        # Le "Concernant" s'ajoute en tête du corps injecté dans le Word
-        if nom_salarie.strip():
-            corps_du_texte = f"Concernant : {nom_salarie}\n\n{corps_msg}"
-        else:
-            corps_du_texte = corps_msg
-
+        corps_du_texte = corps_msg  # "Concernant" va dans {{ salarié }}, pas dans le corps
         nom_fichier_prefix = f"Courrier_MT_{sous_type[:25].replace(' ', '_')}"
         can_generate = bool(destinataire.strip() or nom_salarie.strip())
 
@@ -380,11 +377,7 @@ if choix_principal == "Courrier":
 
         corps_msg = st.text_area("Corps du message :", height=300, key="corps_texte")
 
-        if nom_salarie.strip():
-            corps_du_texte = f"Concernant : {nom_salarie}\n\n{corps_msg}"
-        else:
-            corps_du_texte = corps_msg
-
+        corps_du_texte = corps_msg  # "Concernant" va dans {{ salarié }}, pas dans le corps
         nom_fichier_prefix = f"Courrier_{sous_type[:25].replace(' ', '_')}"
         can_generate = bool(destinataire.strip() or nom_salarie.strip())
 
@@ -449,11 +442,11 @@ elif choix_principal == "Ordonnance":
         nom_salarie    = st.text_input("Nom et Prénom du salarié :", key="nom_salarie_ordo")
         date_naissance = st.text_input("Date de naissance (optionnel) :", key="ddn_ordo")
 
-        if nom_salarie.strip():
-            if date_naissance.strip():
-                destinataire = f"M. / Mme {nom_salarie}\nNé(e) le {date_naissance}"
-            else:
-                destinataire = f"M. / Mme {nom_salarie}"
+        # Pour les ordonnances : le nom va dans {{ salarié }}, la DDN dans {{ destinataire }}
+        if date_naissance.strip():
+            destinataire = f"Né(e) le {date_naissance}"
+        else:
+            destinataire = ""
 
         corps_du_texte     = ORDONNANCES[sous_type]
         nom_fichier_prefix = f"Ordonnance_{sous_type.replace(' ', '_')}"
@@ -473,26 +466,21 @@ if can_generate:
 
     if st.button("📄 Générer le document Word", type="primary"):
         try:
-            # Relecture depuis session_state pour garantir les valeurs les plus récentes
             date_val = st.session_state.get("date_saisie", datetime.today().strftime('%d/%m/%Y'))
 
-            # Reconstruction du corps final selon la section active
-            corps_base = st.session_state.get("corps_texte", corps_du_texte)
-            nom_pour_corps = ""
+            # Récupération du nom du salarié pour la balise {{ salarié }} du template
+            salarie_val = ""
             if choix_principal == "Courrier":
                 if categorie == "Médecin traitant":
-                    nom_pour_corps = st.session_state.get("nom_salarie_mt", "")
+                    salarie_val = st.session_state.get("nom_salarie_mt", "")
                 elif categorie == "Autre médecin":
-                    nom_pour_corps = st.session_state.get("nom_salarie_am", "")
+                    salarie_val = st.session_state.get("nom_salarie_am", "")
                 elif categorie == "Courrier pour salarié":
-                    nom_pour_corps = st.session_state.get("nom_salarie_sal", "")
+                    salarie_val = st.session_state.get("nom_salarie_sal", "")
+            elif choix_principal == "Ordonnance":
+                salarie_val = st.session_state.get("nom_salarie_ordo", "")
 
-            if nom_pour_corps.strip():
-                corps_final = f"Concernant : {nom_pour_corps}\n\n{corps_base}"
-            else:
-                corps_final = corps_du_texte  # utilise la valeur calculée plus haut
-
-            bio = generer_docx(date_val, destinataire, corps_final)
+            bio = generer_docx(date_val, destinataire, salarie_val, corps_du_texte)
             date_str   = date_val.replace("/", "-")
             nom_fichier = f"{nom_fichier_prefix}_{date_str}.docx"
             st.download_button(
