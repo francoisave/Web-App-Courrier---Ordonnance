@@ -200,12 +200,15 @@ def injecter_nom(texte_template: str, nom_salarie: str) -> str:
 
 
 def generer_docx(date_du_jour: str, destinataire: str, corps_du_texte: str) -> io.BytesIO:
-    """Injecte les données dans le template Word et retourne un BytesIO."""
+    """Injecte les données dans le template Word et retourne un BytesIO.
+    Note : docxtpl utilise \\a pour les sauts de paragraphe dans Word (pas \\n).
+    """
     doc = DocxTemplate("master_template.docx")
     doc.render({
         "date_du_jour": date_du_jour,
-        "destinataire": destinataire,
-        "corps_du_texte": corps_du_texte,
+        # \n → \a : convertit les retours ligne Python en vrais paragraphes Word
+        "destinataire": destinataire.replace('\n', '\a'),
+        "corps_du_texte": corps_du_texte.replace('\n', '\a'),
     })
     bio = io.BytesIO()
     doc.save(bio)
@@ -462,14 +465,35 @@ elif choix_principal == "Ordonnance":
 st.markdown("---")
 
 if can_generate:
+    # Aperçu de ce qui sera injecté (aide au diagnostic)
+    with st.expander("👁 Aperçu du contenu du document"):
+        st.text(f"Date : {st.session_state.get('date_saisie', '')}")
+        st.text(f"Destinataire :\n{destinataire}")
+        st.text(f"Corps :\n{corps_du_texte}")
+
     if st.button("📄 Générer le document Word", type="primary"):
         try:
-            bio = generer_docx(
-                st.session_state.get("date_saisie", datetime.today().strftime('%d/%m/%Y')),
-                destinataire,
-                corps_du_texte
-            )
-            date_str   = st.session_state.get("date_saisie", "").replace("/", "-")
+            # Relecture depuis session_state pour garantir les valeurs les plus récentes
+            date_val = st.session_state.get("date_saisie", datetime.today().strftime('%d/%m/%Y'))
+
+            # Reconstruction du corps final selon la section active
+            corps_base = st.session_state.get("corps_texte", corps_du_texte)
+            nom_pour_corps = ""
+            if choix_principal == "Courrier":
+                if categorie == "Médecin traitant":
+                    nom_pour_corps = st.session_state.get("nom_salarie_mt", "")
+                elif categorie == "Autre médecin":
+                    nom_pour_corps = st.session_state.get("nom_salarie_am", "")
+                elif categorie == "Courrier pour salarié":
+                    nom_pour_corps = st.session_state.get("nom_salarie_sal", "")
+
+            if nom_pour_corps.strip():
+                corps_final = f"Concernant : {nom_pour_corps}\n\n{corps_base}"
+            else:
+                corps_final = corps_du_texte  # utilise la valeur calculée plus haut
+
+            bio = generer_docx(date_val, destinataire, corps_final)
+            date_str   = date_val.replace("/", "-")
             nom_fichier = f"{nom_fichier_prefix}_{date_str}.docx"
             st.download_button(
                 label="📥 Télécharger le document",
